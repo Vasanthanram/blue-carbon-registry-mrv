@@ -1,0 +1,34 @@
+
+# Python backend
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Frontend dependencies and generated output
+node_modules/
+dist/
+.next/
+coverage/
+
+# Logs and temporary files
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Local databases - review before committing demo data
+*.sqlite
+*.sqlite3
+*.db
+
+# Python packaging
+build/
+*.egg-info/
