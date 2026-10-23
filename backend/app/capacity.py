@@ -2,11 +2,12 @@ from typing import Dict, Any
 
 def calculate_capacity_balances(
     approved_capacity_tco2e: float,
-    issued_credits_tco2e: float
+    issued_credits_tco2e: float,
+    is_under_review: bool = False
 ) -> Dict[str, float]:
     """
     Enforces the mathematical invariants:
-    - Available Capacity: max(0, C_app - C_issued)
+    - Available Capacity: max(0, C_app - C_issued) if not under review else 0.0 (restricted)
     - Issuance Deficit: max(0, C_issued - C_app)
     Credits already issued are never revoked or deleted.
     """
@@ -14,7 +15,7 @@ def calculate_capacity_balances(
     c_issued = max(0.0, float(issued_credits_tco2e))
 
     if c_app >= c_issued:
-        c_avail = c_app - c_issued
+        c_avail = 0.0 if is_under_review else (c_app - c_issued)
         c_deficit = 0.0
     else:
         c_avail = 0.0
@@ -45,4 +46,3 @@ def calculate_optional_provisional_capacity(
     annual_gross = observed_canopy_proxy_ha * baseline_rate_placeholder * canopy_density_factor
     net_capacity = annual_gross * (1.0 - buffer_deduction_pct)
     return round(net_capacity, 2)
-

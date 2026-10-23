@@ -279,6 +279,30 @@ def record_assessment(site_id: str, payload: AssessmentCreate, db: Session = Dep
     )
     db.add(assessment)
 
+    if is_quality_pass:
+        # Update provisional capacity record
+        latest_cap = db.query(CapacityRecord).filter(CapacityRecord.site_id == site_id).order_by(CapacityRecord.reviewed_at.desc()).first()
+        current_app = latest_cap.approved_capacity_tco2e if latest_cap else 0.0
+        current_issued = latest_cap.issued_credits_tco2e if latest_cap else 0.0
+
+        is_under_review = anomaly_detected or (site.status == "UNDER_REVIEW")
+        balances = calculate_capacity_balances(current_app, current_issued, is_under_review=is_under_review)
+
+        new_est = calculate_optional_provisional_capacity(payload.observed_canopy_proxy_ha, payload.mean_ndvi)
+        cap = CapacityRecord(
+            record_id=f"CAP-{uuid.uuid4().hex[:8].upper()}",
+            site_id=site_id,
+            assessment_id=assessment_id,
+            estimated_capacity_tco2e=new_est,
+            approved_capacity_tco2e=balances["approved_capacity_tco2e"],
+            issued_credits_tco2e=balances["issued_credits_tco2e"],
+            available_capacity_tco2e=balances["available_capacity_tco2e"],
+            issuance_deficit_tco2e=balances["issuance_deficit_tco2e"],
+            approval_status="PROVISIONAL",
+            reviewer_notes=f"Provisional estimate updated to {new_est} tCO2e following observation {assessment_id}." + (" Anomaly flagged: Future issuance restricted pending auditor review." if is_under_review else "")
+        )
+        db.add(cap)
+
     # Audit log
     log = AuditLog(
         log_id=f"LOG-{uuid.uuid4().hex[:8].upper()}",
@@ -355,26 +379,30 @@ def review_capacity(site_id: str, payload: CapacityReviewAction, db: Session = D
     new_approved = payload.approved_capacity_tco2e if payload.approved_capacity_tco2e is not None else current_approved
     new_issued = current_issued + (payload.issued_credits_delta or 0.0)
 
-    # Check that new issuance does not exceed currently available capacity
+    # Check that new issuance does not exceed available capacity under the approved limit
     if payload.issued_credits_delta and payload.issued_credits_delta > 0:
-        available_before = max(0.0, current_approved - current_issued)
-        if payload.issued_credits_delta > available_before:
+        available_limit = max(0.0, new_approved - current_issued)
+        if payload.issued_credits_delta > available_limit:
             raise HTTPException(
                 status_code=400,
-                detail=f"Requested issuance ({payload.issued_credits_delta} tCO2e) exceeds available capacity ({available_before} tCO2e)."
+                detail=f"Requested issuance ({payload.issued_credits_delta} tCO2e) exceeds available capacity ({available_limit} tCO2e)."
             )
-
-    # Calculate invariants
-    balances = calculate_capacity_balances(new_approved, new_issued)
 
     # If action is approval and site was UNDER_REVIEW, restore to ACTIVE_MONITORED
     if payload.action == "APPROVE":
         approval_status = "APPROVED"
         site.status = "ACTIVE_MONITORED"
+        is_under_review = False
     elif payload.action == "REJECT":
         approval_status = "REJECTED"
+        is_under_review = True
     else:
         approval_status = "APPROVED"
+        site.status = "ACTIVE_MONITORED"
+        is_under_review = False
+
+    # Calculate invariants
+    balances = calculate_capacity_balances(new_approved, new_issued, is_under_review=is_under_review)
 
     record_id = f"CAP-{uuid.uuid4().hex[:8].upper()}"
     tx_hash = f"0x{uuid.uuid4().hex}{uuid.uuid4().hex[:32]}"
